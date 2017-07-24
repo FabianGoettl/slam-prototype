@@ -1,0 +1,7 @@
+<left_image> <right_image> [--algorithm=bm|sgbm|hh|sgbm3way] [--blocksize=<block_size>]\n"
+           "[--max-disparity=<max_disparity>] [--scale=scale_factor>] [-i=<intrinsic_filename>] [-e=<extrinsic_filename>]\n"
+           "[--no-display] [-o=<disparity_image>] [-p=<point_cloud_file>]
+		   
+0 0 --algorithm=bm -i=D:\Development\Seminar\stereo-calibration\mystereocalib_unit22.yml
+
+0 0 --algorithm=sgbm -i=D:\Development\Seminar\stereo-calibration\mystereocalib-5x7.yml
