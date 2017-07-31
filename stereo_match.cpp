@@ -30,7 +30,7 @@ boost::shared_ptr<pcl::visualization::PCLVisualizer> rgbVis(pcl::PointCloud<pcl:
 	pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(cloud);
 	viewer->addPointCloud<pcl::PointXYZRGB>(cloud, rgb, cloud_name);
 	viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, cloud_name);
-	viewer->addCoordinateSystem(1.0);
+	viewer->addCoordinateSystem(100.0);
 	viewer->initCameraParameters();
 	return (viewer);
 }
@@ -120,10 +120,9 @@ int main(int argc, char** argv)
 	// -----Create point cloud-----
 	// ------------------------------------
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr point_cloud_ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
-	std::cout << "Genarating point cloud.\n\n";
-	
 	point_cloud_ptr->width = (int)point_cloud_ptr->points.size();
 	point_cloud_ptr->height = 1;
+
 
 	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
 	viewer = rgbVis(point_cloud_ptr);
@@ -290,9 +289,9 @@ int main(int argc, char** argv)
 		}
 
 		// Extracting key points
-		Ptr<AKAZE> detectorAKAZE = AKAZE::create(cv::AKAZE::DESCRIPTOR_KAZE);
-		std::vector<KeyPoint> keypoints_AKAZE;
-		detectorAKAZE->detect(img1, keypoints_AKAZE);
+		Ptr<ORB> detectorORB = ORB::create();
+		std::vector<KeyPoint> keypoints_ORB;
+		detectorORB->detect(img1, keypoints_ORB);
 
 		if (scale != 1.f)
 		{
@@ -374,14 +373,20 @@ int main(int argc, char** argv)
 
 
 		// --- Create point cloud
+		point_cloud_ptr->clear();
+
 		const double max_z = 1.0e4;
 		for (int y = 0; y < xyz.rows; y++)
 		{
 			for (int x = 0; x < xyz.cols; x++)
 			{
+				//int x = round(k.pt.x);
+				//int y = round(k.pt.y);
+
 				Vec3f point = xyz.at<Vec3f>(y, x);
+
 				if (fabs(point[2] - max_z) < FLT_EPSILON || fabs(point[2]) > max_z) continue;
-				
+
 				pcl::PointXYZRGB rgbPoint;
 				rgbPoint.x = point[0];
 				rgbPoint.y = point[1];
@@ -398,13 +403,16 @@ int main(int argc, char** argv)
 		}
 		//viewer->updatePointCloud(point_cloud_ptr, cloud_name);
 		viewer->removePointCloud(cloud_name);
+
+		point_cloud_ptr->width = (int)point_cloud_ptr->points.size();
+		point_cloud_ptr->height = 1;
 		pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(point_cloud_ptr);
 		viewer->addPointCloud<pcl::PointXYZRGB>(point_cloud_ptr, rgb, cloud_name);
 
 		viewer->spinOnce(100);
 
 		// --- Draw keypoints
-		for (KeyPoint &k : keypoints_AKAZE) {
+		for (KeyPoint &k : keypoints_ORB) {
 			int x = round(k.pt.x);
 			int y = round(k.pt.y);
 
