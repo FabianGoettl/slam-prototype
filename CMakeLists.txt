@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.11)
-project(stereo_match)
+project(slamPrototype)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -10,5 +10,5 @@ find_package(PCL 1.8.0 REQUIRED COMPONENTS common io registration segmentation v
 include_directories(${PCL_INCLUDE_DIRS})
 
 
-add_executable(stereo_match stereo_match.cpp)
-target_link_libraries(stereo_match ${OpenCV_LIBS} ${PCL_LIBRARIES})
+add_executable(slamPrototype my_slam_prototype.cpp)
+target_link_libraries(slamPrototype ${OpenCV_LIBS} ${PCL_LIBRARIES})
