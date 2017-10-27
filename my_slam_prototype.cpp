@@ -1,39 +1,24 @@
-#include <boost/thread/thread.hpp>
+﻿#include <boost/thread/thread.hpp>
 
 #include "opencv2/calib3d/calib3d.hpp"
 #include "opencv2/imgproc.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/core/utility.hpp"
-
-#include <pcl/common/common_headers.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/io/pcd_io.h>
-#include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/console/parse.h>
-#include <pcl/registration/icp.h>
+#include "opencv2/xfeatures2d.hpp"
 
 #include <iostream>
 #include <stdio.h>
 #include <cmath>
 
+#include "my_slam_tracking.h"
+
+// Ratio to the second neighbor to consider a good match.
+#define RATIO    0.6
+
 using namespace cv;
 using namespace std;
 
-const string feature_cloud_name = "RGB point cloud";
-
-boost::shared_ptr<pcl::visualization::PCLVisualizer> createVis(string windowName)
-{
-	// --------------------------------------------
-	// -----Open 3D viewer and add point cloud-----
-	// --------------------------------------------
-	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer(windowName));
-	viewer->setBackgroundColor(0, 0, 0);
-	viewer->addCoordinateSystem(1.0);
-	viewer->initCameraParameters();
-	viewer->setCameraPosition(0, 0, -1, 0, -1, 0);
-	return (viewer);
-}
 
 static void print_help()
 {
@@ -60,6 +45,8 @@ int sad_slider = 3;
 int uniquenessRatio_slider = uniquenessRatio;
 int speckleWindowSize_slider = speckleWindowSize;
 int speckleRange_slider = speckleRange;
+
+list<slam::FeatureTrack> tracks; // feature tracks
 
 void on_trackbar(int, void*)
 {
@@ -161,82 +148,27 @@ void triangulateMatches(vector<DMatch>& matches, const vector<KeyPoint>&keypoint
 	}
 }
 
+
+
+
+void matchFeatures(const cv::Mat &query, const cv::Mat &target,
+	std::vector<cv::DMatch> &goodMatches) {
+	std::vector<std::vector<cv::DMatch>> matches;
+	FlannBasedMatcher matcher(new cv::flann::LshIndexParams(12, 20, 2));
+	// Find 2 best matches for each descriptor to make later the second neighbor test.
+	matcher.knnMatch(query, target, matches, 2);
+	// Second neighbor ratio test.
+	for (unsigned int i = 0; i < matches.size(); ++i) {
+		if (matches[i].size() >= 2) {
+			if (matches[i][0].distance < matches[i][1].distance * RATIO)
+				goodMatches.push_back(matches[i][0]);
+		}
+	}
+}
+
+
 int main(int argc, char** argv)
 {
-	/*pcl::PointCloud<pcl::PointXYZ>::Ptr source(new pcl::PointCloud<pcl::PointXYZ>);
-	pcl::PointCloud<pcl::PointXYZ>::Ptr target(new pcl::PointCloud<pcl::PointXYZ>);
-	pcl::PointCloud<pcl::PointXYZ>::Ptr source_registered(new pcl::PointCloud<pcl::PointXYZ>);
-
-	if (pcl::io::loadPCDFile<pcl::PointXYZ>("cloud0.pcd", *source) == -1) //* load the file
-	{
-		PCL_ERROR("Couldn't read file \n");
-	}
-
-	if (pcl::io::loadPCDFile<pcl::PointXYZ>("cloud1.pcd", *target) == -1) //* load the file
-	{
-		PCL_ERROR("Couldn't read file \n");
-	}
-
-	source->width = (int)source->points.size();
-	source->height = 1;
-	target->width = (int)target->points.size();
-	target->height = 1;
-
-	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
-	viewer->setBackgroundColor(0, 0, 0);
-	viewer->addCoordinateSystem(1.0);
-	viewer->initCameraParameters();
-	viewer->setCameraPosition(0, 0, -1, 0, -1, 0);
-
-	pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-		red_source(source, 255, 0, 0);
-	viewer->addPointCloud<pcl::PointXYZ>(source, red_source, "source");
-
-	pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-		green_target(target, 0, 255, 0);
-	viewer->addPointCloud<pcl::PointXYZ>(target, green_target, "target");
-
-
-	pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-	// Set the input source and target
-	icp.setInputCloud(source);
-	icp.setInputTarget(target);
-	// Set the max correspondence distance (e.g., correspondences with higher distances will be ignored)
-	icp.setMaxCorrespondenceDistance(0.5);
-	// Set the maximum number of iterations (criterion 1)
-	icp.setMaximumIterations(100000);
-	icp.setRANSACIterations(10000);
-	// Set the transformation epsilon (criterion 2)
-	icp.setTransformationEpsilon(1e-5);
-	// Set the euclidean distance difference epsilon (criterion 3)
-	icp.setEuclideanFitnessEpsilon(0.01);
-	// Perform the alignment
-	icp.align(*source_registered);
-
-	cout << "has converged:" << icp.hasConverged() << " score: " <<
-		icp.getFitnessScore() << endl;
-
-	// Obtain the transformation that aligned cloud_source to cloud_source_registered
-	Eigen::Matrix4f transformation = icp.getFinalTransformation();
-
-
-
-	printf("ICP Transformation\n");
-	cout << transformation << endl;
-
-	pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-		white_source_registered(source_registered, 255, 255, 255);
-	viewer->addPointCloud<pcl::PointXYZ>(source_registered, white_source_registered, "registered");
-
-	while (1) {
-		viewer->spinOnce(100);
-	}*/
-
-	boost::shared_ptr<pcl::visualization::PCLVisualizer> feature_viewer, registration_viewer;
-	feature_viewer = createVis("Feature point cloud");
-	registration_viewer = createVis("Registration point clouds");
-
-
 	string img1_filename = "";
 	string img2_filename = "";
 	string intrinsic_filename = "";
@@ -249,8 +181,6 @@ int main(int argc, char** argv)
 
 	bool no_display;
 	float scale;
-
-	int savedClouds = 0;
 
 	Ptr<StereoBM> bm = StereoBM::create(16, 9);
 	Ptr<StereoSGBM> sgbm = StereoSGBM::create(0, 16, 3);
@@ -366,27 +296,18 @@ int main(int argc, char** argv)
 		initUndistortRectifyMap(M2, D2, R2, P2, img_size, CV_16SC2, map21, map22);
 	}
 
+
+
+
 	VideoCapture capA, capB;
 
 	if (!capA.open(0) || !capB.open(1))
 		return 0;
 
-	Eigen::Matrix4f cur_camera_pose = Eigen::Matrix4f::Identity();
-
-	pcl::PointCloud<pcl::PointXYZ>::Ptr prev_frame_cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>);
-	pcl::PointCloud<pcl::PointXYZ>::Ptr total_cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>);
-
-	//vector<DMatch> total_matches;
-	//vector<Point3f> total_world_pts;
-
-	Mat prev_img1, prev_img2;
-	vector<cv::KeyPoint> prev_keypoints1, prev_keypoints2;
-	Mat prev_descriptors1, prev_descriptors2;
-	vector<Point3f> prev_world_pts;
-
-	map<int, int> prev_keypointIdxToWorldIdxLookup;
-
+	bool do_tracking;
+	int frame_count = 0;
 	bool initialized = false;
+
 	while (1)
 	{
 		Mat frameAraw, frameBraw, frameA, frameB;
@@ -394,8 +315,17 @@ int main(int argc, char** argv)
 		capA >> frameAraw;
 		capB >> frameBraw;
 
-		Mat img1, img2;
+		if (frameAraw.empty() || frameBraw.empty()) continue;
 
+		frame_count++;
+
+		do_tracking = frame_count > 10;
+
+		if (!do_tracking) continue;
+
+		// Remapping stereo image pair to share same epipolar lines
+		Mat img1, img2;
+		cout << "remapStart\n";
 		if (!intrinsic_filename.empty())
 		{
 			remap(frameAraw, img1, map11, map12, INTER_LINEAR);
@@ -405,235 +335,52 @@ int main(int argc, char** argv)
 			img1 = frameAraw;
 			img2 = frameBraw;
 		}
+		cout << "remapEnd\n";
 
 		// Extracting features
-		Ptr<ORB> detectorORB = ORB::create();
+		Ptr<cv::ORB> detectorORB = ORB::create();
 		vector<KeyPoint> keypoints1, keypoints2;
 		Mat descriptors1, descriptors2;
 
+		cout << "detectStart\n";
 		detectorORB->detectAndCompute(img1, noArray(), keypoints1, descriptors1);
 		detectorORB->detectAndCompute(img2, noArray(), keypoints2, descriptors2);
+		cout << "detectEnd\n";
 
 		// Match keypoints
 		vector<DMatch> matches, goodMatches;
-		vector<KeyPoint> matched1, matched2;
 
-		Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
-		matcher->match(descriptors1, descriptors2, matches, noArray());
+		if (keypoints1.size() == 0 || keypoints2.size() == 0) continue;
 
-		double maxYDistance = 5;
+		cout << "matchStart\n";
+		//Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
+		//matcher->match(descriptors1, descriptors2, matches, noArray());
+		matchFeatures(descriptors1, descriptors2, matches);
+		cout << "matchEnd\n";
+
+		cout << "Cols: " << descriptors1.cols << endl;
+
+		if (matches.size() == 0) continue;
+
+		// Filter features along y-axis
+		double maxYDistance = 10;
 		filterFeatures(matches, keypoints1, keypoints2, goodMatches, maxYDistance);
 
 		if (goodMatches.size() == 0) continue;
 
 		// Draw stereo matches
 		Mat res;
+		cout << "drawStart\n";
 		drawMatches(img1, keypoints1, img2, keypoints2, goodMatches, res, Scalar(255, 0, 0), Scalar(255, 0, 0));
 		imshow("keypoint matches", res);
+		cout << "drawEnd\n";
+		
 
-		vector<Point3f> world_pts;
-		map<int, int> keypointIdxToWorldIdxLookup;
-
-		triangulateMatches(goodMatches, keypoints1, keypoints2, P1, P2, world_pts, keypointIdxToWorldIdxLookup);
-
-		//assert(keypointIdxToWorldIdxLookup.size() == world_pts.size());
-
-		/*pcl::PointCloud<pcl::PointXYZ>::Ptr cur_frame_cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>);
-
-		if (prev_keypoints1.empty() && prev_keypoints2.empty()) {
-			
-		}
-		else {
-			vector<DMatch> matches1, matches2;
-			Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
-			matcher->match(descriptors1, prev_descriptors1, matches1, noArray());
-			//matcher->match(descriptors2, prev_descriptors2, matches2, noArray());
-
-			// Draw previous matches
-			Mat res;
-			if (prev_keypoints1.size() == keypoints1.size()) {
-				drawMatches(prev_img1, prev_keypoints1, img1, keypoints1, matches1, res, Scalar(255, 0, 0), Scalar(255, 0, 0));
-				imshow("prev keypoint matches", res);
-			}
-
-			prev_frame_cloud_ptr->clear();
-
-			// Turn matches with current and previous features into a point cloud
-			for (auto it = matches1.begin(); it != matches1.end(); ++it)
-			{
-				if (keypointIdxToWorldIdxLookup.count(it->queryIdx) == 0) continue;
-
-				// Get 3D point of current feature
-				Point3f currentWorldPnt = world_pts[keypointIdxToWorldIdxLookup[it->queryIdx]];
-				
-				pcl::PointXYZ cloudPoint;
-				cloudPoint.x = currentWorldPnt.x;
-				cloudPoint.y = currentWorldPnt.y;
-				cloudPoint.z = currentWorldPnt.z;
-
-				cur_frame_cloud_ptr->points.push_back(cloudPoint);
-
-				if (prev_keypointIdxToWorldIdxLookup.count(it->queryIdx) == 0) continue;
-
-				// Get 3D point of previous feature
-				Point3f prevWorldPnt = prev_world_pts[prev_keypointIdxToWorldIdxLookup[it->trainIdx]];
-
-				cloudPoint.x = prevWorldPnt.x;
-				cloudPoint.y = prevWorldPnt.y;
-				cloudPoint.z = prevWorldPnt.z;
-
-				prev_frame_cloud_ptr->points.push_back(cloudPoint);
-			}
-		}
-
-		prev_keypoints1 = keypoints1;
-		prev_keypoints2 = keypoints2;
-		prev_descriptors1 = descriptors1;
-		prev_descriptors2 = descriptors2;
-		prev_img1 = img1.clone();
-		prev_img2 = img2.clone();
-		prev_world_pts = world_pts;
-		prev_keypointIdxToWorldIdxLookup = keypointIdxToWorldIdxLookup;
-
-		// Append to vectors
-		//total_matches.insert(total_matches.end(), goodMatches.begin(), goodMatches.end());
-		//total_world_pts.insert(total_world_pts.end(), worldPts.begin(), worldPts.end());
-		*/
-		// --- Create new point cloud
-		pcl::PointCloud<pcl::PointXYZ>::Ptr cur_frame_cloud_ptr(new pcl::PointCloud<pcl::PointXYZ>);
-
-		for (Point3f &p : world_pts) {
-			pcl::PointXYZ cloudPoint;
-			cloudPoint.x = p.x;
-			cloudPoint.y = p.y;
-			cloudPoint.z = p.z;
-
-			cur_frame_cloud_ptr->points.push_back(cloudPoint);
-		}
-
-
-		// --- Draw keypoints
-		/*for (KeyPoint &k : keypoints1) {
-			int x = round(k.pt.x);
-			int y = round(k.pt.y);
-
-			circle(frameAraw, Point(x, y), 5, Scalar(0, 255, 0, 128));  //Scalar(B, G, R, 128)
-
-			//cout << "Keypoint Depth: " << depth << endl;
-		}
-		for (KeyPoint &k : keypoints2) {
-			int x = round(k.pt.x);
-			int y = round(k.pt.y);
-
-			circle(img2, Point(x, y), 5, Scalar(0, 255, 0, 128));
-		}*/
-
-		bool transformFound = false;
-		if (prev_frame_cloud_ptr->points.size() > 0 && cur_frame_cloud_ptr->points.size() > 0) {
-
-			pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
-			// Set the input source and target
-			icp.setInputCloud(cur_frame_cloud_ptr);
-			icp.setInputTarget(prev_frame_cloud_ptr);
-			// Set the max correspondence distance (e.g., correspondences with higher distances will be ignored)
-			icp.setMaxCorrespondenceDistance(0.5);
-			// Set the maximum number of iterations (criterion 1)
-			icp.setMaximumIterations(100000);
-			icp.setRANSACIterations(10000);
-			// Set the transformation epsilon (criterion 2)
-			icp.setTransformationEpsilon(1e-5);
-			// Set the euclidean distance difference epsilon (criterion 3)
-			icp.setEuclideanFitnessEpsilon(0.01);
-
-			pcl::PointCloud<pcl::PointXYZ>::Ptr last_frame_registered(new pcl::PointCloud<pcl::PointXYZ>);
-
-			// Perform the alignment
-			icp.align(*last_frame_registered);
-
-
-
-			double maxFitnessScore = 0.1;
-			if (icp.hasConverged() && (icp.getFitnessScore() <= maxFitnessScore)) {
-
-				transformFound = true;
-
-				cout << "GOOD: ICP has converged:" << icp.hasConverged() << " score: " <<
-					icp.getFitnessScore() << endl;
-
-				// Obtain the transformation that aligned source to source_registered
-				Eigen::Matrix4f transformation = icp.getFinalTransformation();
-				printf("ICP Transformation\n");
-				cout << transformation << endl;
-
-				cur_camera_pose = transformation * cur_camera_pose;
-
-				pcl::PointCloud<pcl::PointXYZ> cur_frame_cloud_transformed;
-				pcl::transformPointCloud(*cur_frame_cloud_ptr, cur_frame_cloud_transformed, cur_camera_pose);
-
-				// Add the point cloud data to the total cloud
-				*total_cloud_ptr += cur_frame_cloud_transformed;
-
-				// -- Show total features in viewer
-				if (feature_viewer->contains(feature_cloud_name)) {
-					feature_viewer->updatePointCloud(total_cloud_ptr, feature_cloud_name);
-				}
-				else {
-					// Add point cloud
-					total_cloud_ptr->width = (int)total_cloud_ptr->points.size();
-					total_cloud_ptr->height = 1;
-
-					pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-						green(total_cloud_ptr, 0, 255, 0);
-					feature_viewer->addPointCloud<pcl::PointXYZ>(total_cloud_ptr, green, feature_cloud_name);
-				}
-
-				registration_viewer->removeAllPointClouds();
-
-				cur_frame_cloud_ptr->width = (int)cur_frame_cloud_ptr->points.size();
-				cur_frame_cloud_ptr->height = 1;
-				prev_frame_cloud_ptr->width = (int)prev_frame_cloud_ptr->points.size();
-				prev_frame_cloud_ptr->height = 1;
-				last_frame_registered->width = (int)last_frame_registered->points.size();
-				last_frame_registered->height = 1;
-
-				pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-					red_source(cur_frame_cloud_ptr, 255, 0, 0);
-				registration_viewer->addPointCloud<pcl::PointXYZ>(cur_frame_cloud_ptr, red_source, "source");
-
-				pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-					green_target(prev_frame_cloud_ptr, 0, 255, 0);
-				registration_viewer->addPointCloud<pcl::PointXYZ>(prev_frame_cloud_ptr, green_target, "target");
-
-				pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>
-					white_source_registered(last_frame_registered, 255, 255, 255);
-				registration_viewer->addPointCloud<pcl::PointXYZ>(last_frame_registered, white_source_registered, "registered");
-
-
-				registration_viewer->spinOnce(10);
-				feature_viewer->spinOnce(100);
-			}
-			else {
-				cout << "SKIPPED: Bad ICP:" << icp.hasConverged() << " score: " <<
-					icp.getFitnessScore() << endl;
-			}
-
-			// Cleanup
-			//last_frame_registered->clear();
-		}
-
-		if (!initialized || transformFound) {
-			// Set current frame as last frame
-			prev_frame_cloud_ptr->clear();
-			prev_frame_cloud_ptr = cur_frame_cloud_ptr;
+		if (!initialized) {
 			initialized = true;
 		}
 
 		char key = waitKey(10);
-		if (key == 's') {
-			printf("Saving pointcloud...\n");
-			pcl::io::savePCDFileASCII("cloud" + to_string(savedClouds++) + ".pcd", *cur_frame_cloud_ptr);
-		}
-
 		printf("\n");
 	}
 
