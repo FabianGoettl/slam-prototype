@@ -5,6 +5,9 @@
 
 #include <opencv2/opencv.hpp>
 
+using namespace cv;
+using namespace std;
+
 namespace slam {
 
 	class FeatureTrack {
@@ -56,7 +59,8 @@ namespace slam {
 
 		static void match_features(const std::list<FeatureTrack> &tracks, const cv::Mat &new_descriptors, std::vector<int> &match_idx);
 
-		static void update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points, const cv::Mat &feature_descriptors, std::vector<int> &match_idx);
+		static void update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points, const cv::Mat &feature_descriptors, 
+			std::vector<int> &match_idx, std::vector<cv::Point3f>& pnts3D);
 
 		static bool is_track_stale(const FeatureTrack &track);
 		
@@ -71,9 +75,12 @@ namespace slam {
 			}
 		}
 
-		static void TrackingModule::transformation_from_tracks(const std::list<FeatureTrack> &tracks, const cv::Mat3f &active_pointmap, cv::Matx33f &R, cv::Matx31f &T);
+		static void triangulate_matches(std::vector<cv::DMatch>& matches, const std::vector<cv::KeyPoint>&keypoints1, const std::vector<cv::KeyPoint>& keypoints2,
+			cv::Mat& cam1P, cv::Mat& cam2P, std::vector<cv::Point3f>& pnts3D);
+
+		static void transformation_from_tracks(const std::list<FeatureTrack> &tracks, cv::Matx33f &R, cv::Matx31f &T);
 		
-		static void ransac_orientation(const cv::Mat1f &X, const cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T);
+		static void ransac_transformation(const cv::Mat1f &X, const cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T);
 		static void absolute_orientation(cv::Mat1f &X, cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T);
 	};
 

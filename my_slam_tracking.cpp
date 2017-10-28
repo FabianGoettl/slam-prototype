@@ -3,6 +3,10 @@
 // Ratio to the second neighbor to consider a good match.
 #define RATIO    0.6
 
+// Max z-value (depth in mm)
+// 40*stereobaseline is usually a good value
+#define MAX_Z 3800
+
 using namespace cv;
 using namespace std;
 
@@ -68,7 +72,9 @@ namespace slam {
 		cout << "Matched features:" << match_count << endl;
 	}
 
-	void TrackingModule::update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points, const cv::Mat &feature_descriptors, std::vector<int> &match_idx) {
+	void TrackingModule::update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points, 
+		const cv::Mat &feature_descriptors, std::vector<int> &match_idx, std::vector<cv::Point3f>& pnts3D) {
+
 		std::list<FeatureTrack>::iterator track_it;
 		int i, updated = 0, missed = 0;
 		for (i = 0, track_it = tracks.begin(); track_it != tracks.end(); i++, track_it++) {
@@ -76,6 +82,7 @@ namespace slam {
 			if (j >= 0){
 				track_it->missed_frames = 0;
 				track_it->active_position = feature_points[j].pt;
+				track_it->active_position_3d = pnts3D[j];
 				feature_descriptors.row(j).copyTo(track_it->descriptor);
 				updated++;
 			}
@@ -120,49 +127,47 @@ namespace slam {
 		}
 	}
 
-	void TrackingModule::transformation_from_tracks(const std::list<FeatureTrack> &tracks, const cv::Mat3f &active_pointmap, cv::Matx33f &R, cv::Matx31f &T) {
-		/*std::list<FeatureTrack>::const_iterator track_it;
+	void TrackingModule::transformation_from_tracks(const std::list<FeatureTrack> &tracks, cv::Matx33f &R, cv::Matx31f &T) {
+		std::list<FeatureTrack>::const_iterator track_it;
 
 		cv::Mat1f X(0, 3), Y(0, 3);
 		X.reserve(tracks.size());
 		Y.reserve(tracks.size());
 
 		for (track_it = tracks.begin(); track_it != tracks.end(); track_it++) {
+			
 			if (track_it->missed_frames != 0)
 				continue;
 
-			int ub = round<int>(track_it->base_position.x), vb = round<int>(track_it->base_position.y);
-
-			cv::Vec3f &base_point = (*shared.base_pointmap)(vb, ub);
-			if (base_point(2) == 0)
+			const cv::Point3f &base_point = track_it->base_position_3d;
+			if (base_point.z <= 0)
 				continue;
 
-			int ua = round<int>(track_it->active_position.x), va = round<int>(track_it->active_position.y);
-
-			const cv::Vec3f &active_point = active_pointmap(va, ua);
-			if (active_point(2) == 0)
+			const cv::Point3f &active_point = track_it->active_position_3d;
+			if (active_point.z <= 0)
 				continue;
 
-			// Add to matrices
+			// Add new row to matrices
 			int i = X.rows;
 			X.resize(i + 1);
-			X(i, 0) = base_point(0);
-			X(i, 1) = base_point(1);
-			X(i, 2) = base_point(2);
+			X(i, 0) = base_point.x;
+			X(i, 1) = base_point.y;
+			X(i, 2) = base_point.z;
 
 			Y.resize(i + 1);
-			Y(i, 0) = active_point(0);
-			Y(i, 1) = active_point(1);
-			Y(i, 2) = active_point(2);
+			Y(i, 0) = active_point.x;
+			Y(i, 1) = active_point.y;
+			Y(i, 2) = active_point.z;
 		}
 
-		ransac_orientation(X, Y, R, T);*/
+		if(X.rows > 0 && Y.rows)
+			ransac_transformation(X, Y, R, T);
 	}
 
-	void TrackingModule::ransac_orientation(const cv::Mat1f &X, const cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T) {
+	void TrackingModule::ransac_transformation(const cv::Mat1f &X, const cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T) {
 		const int max_iterations = 200;
 		const int min_support = 3;
-		const float inlier_error_threshold = 0.2f;
+		const float inlier_error_threshold = 0.2f * 1000;
 
 		const int pcount = X.rows;
 		cv::RNG rng;
@@ -269,4 +274,52 @@ namespace slam {
 		// Translation
 		T = meanX - R*meanY;
 	}
+
+	void TrackingModule::triangulate_matches(vector<DMatch>& matches, const vector<KeyPoint>&keypoints1, const vector<KeyPoint>& keypoints2, 
+		Mat& cam1P, Mat& cam2P, vector<Point3f>& pnts3D)
+	{
+		// Convert keypoints into Point2f
+		vector<cv::Point2f> points1, points2;
+
+		int i = 0;
+		for (auto it = matches.begin(); it != matches.end(); ++it)
+		{
+			// Get the position of left keypoints
+			float xl = keypoints1[it->queryIdx].pt.x;
+			float yl = keypoints1[it->queryIdx].pt.y;
+
+			points1.push_back(Point2f(xl, yl));
+
+			// Get the position of right keypoints
+			float xr = keypoints2[it->trainIdx].pt.x;
+			float yr = keypoints2[it->trainIdx].pt.y;
+
+			points2.push_back(Point2f(xr, yr));
+
+			i++;
+		}
+
+		Mat pnts3DMat;
+		cv::triangulatePoints(cam1P, cam2P, points1, points2, pnts3DMat);
+
+		assert(pnts3DMat.cols == keypoints1.size());
+
+		for (int x = 0; x < pnts3DMat.cols; x++) {
+			float W = pnts3DMat.at<float>(3, x);
+			float Z = pnts3DMat.at<float>(2, x) / W; /// 1000;
+
+			if (fabs(Z - MAX_Z) < FLT_EPSILON || fabs(Z) > MAX_Z || Z < 0) {
+				pnts3D.push_back(Point3f(0, 0, 0)); // Push empty point TODO: replace with lookup table?
+				continue;
+			}
+
+			float X = pnts3DMat.at<float>(0, x) / W; /// 1000;
+			float Y = pnts3DMat.at<float>(1, x) / W; /// 1000;
+
+			pnts3D.push_back(Point3f(X, Y, Z));
+		}
+
+		assert(pnts3D.size() == keypoints1.size());
+	}
+
 };
