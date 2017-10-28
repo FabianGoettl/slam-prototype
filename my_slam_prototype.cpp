@@ -13,8 +13,7 @@
 
 #include "my_slam_tracking.h"
 
-// Ratio to the second neighbor to consider a good match.
-#define RATIO    0.6
+
 
 using namespace cv;
 using namespace std;
@@ -45,8 +44,6 @@ int sad_slider = 3;
 int uniquenessRatio_slider = uniquenessRatio;
 int speckleWindowSize_slider = speckleWindowSize;
 int speckleRange_slider = speckleRange;
-
-list<slam::FeatureTrack> tracks; // feature tracks
 
 void on_trackbar(int, void*)
 {
@@ -151,7 +148,7 @@ void triangulateMatches(vector<DMatch>& matches, const vector<KeyPoint>&keypoint
 
 
 
-void matchFeatures(const cv::Mat &query, const cv::Mat &target,
+/*void matchFeatures(const cv::Mat &query, const cv::Mat &target,
 	std::vector<cv::DMatch> &goodMatches) {
 	std::vector<std::vector<cv::DMatch>> matches;
 	FlannBasedMatcher matcher(new cv::flann::LshIndexParams(12, 20, 2));
@@ -164,11 +161,15 @@ void matchFeatures(const cv::Mat &query, const cv::Mat &target,
 				goodMatches.push_back(matches[i][0]);
 		}
 	}
-}
+}*/
+
+
 
 
 int main(int argc, char** argv)
 {
+	slam::TrackingSharedData shared;
+
 	string img1_filename = "";
 	string img2_filename = "";
 	string intrinsic_filename = "";
@@ -305,8 +306,10 @@ int main(int argc, char** argv)
 		return 0;
 
 	bool do_tracking;
-	int frame_count = 0;
+	long frame_count = 0;
 	bool initialized = false;
+
+	Mat prev_img1;
 
 	while (1)
 	{
@@ -325,7 +328,7 @@ int main(int argc, char** argv)
 
 		// Remapping stereo image pair to share same epipolar lines
 		Mat img1, img2;
-		cout << "remapStart\n";
+
 		if (!intrinsic_filename.empty())
 		{
 			remap(frameAraw, img1, map11, map12, INTER_LINEAR);
@@ -335,10 +338,12 @@ int main(int argc, char** argv)
 			img1 = frameAraw;
 			img2 = frameBraw;
 		}
-		cout << "remapEnd\n";
+
+
+		////////////////////////////////////
 
 		// Extracting features
-		Ptr<cv::ORB> detectorORB = ORB::create();
+		/*Ptr<cv::ORB> detectorORB = ORB::create();
 		vector<KeyPoint> keypoints1, keypoints2;
 		Mat descriptors1, descriptors2;
 
@@ -355,7 +360,8 @@ int main(int argc, char** argv)
 		cout << "matchStart\n";
 		//Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
 		//matcher->match(descriptors1, descriptors2, matches, noArray());
-		matchFeatures(descriptors1, descriptors2, matches);
+		//matchFeatures(descriptors1, descriptors2, matches);
+
 		cout << "matchEnd\n";
 
 		cout << "Cols: " << descriptors1.cols << endl;
@@ -372,12 +378,134 @@ int main(int argc, char** argv)
 		Mat res;
 		cout << "drawStart\n";
 		drawMatches(img1, keypoints1, img2, keypoints2, goodMatches, res, Scalar(255, 0, 0), Scalar(255, 0, 0));
-		imshow("keypoint matches", res);
-		cout << "drawEnd\n";
+		imshow("stereo matches", res);
+		cout << "drawEnd\n";*/
 		
 
-		if (!initialized) {
-			initialized = true;
+		/////////////// Time variant test /////////////////////
+
+		/*if (prev_img1.empty()) {
+			prev_img1 = img1.clone();
+			continue;
+		}
+
+		Ptr<cv::ORB> detectorORB = ORB::create();
+		vector<KeyPoint> keypoints1, keypoints2;
+		Mat descriptors1, descriptors2;
+
+		cout << "detectStart\n";
+		detectorORB->detectAndCompute(img1, noArray(), keypoints1, descriptors1);
+		detectorORB->detectAndCompute(prev_img1, noArray(), keypoints2, descriptors2);
+		cout << "detectEnd\n";
+
+		// Match keypoints
+		vector<DMatch> matches, goodMatches;
+
+		if (keypoints1.size() == 0 || keypoints2.size() == 0) continue;
+
+		cout << "matchStart\n";
+		Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
+		matcher->match(descriptors1, descriptors2, matches, noArray());
+
+		cout << "matchEnd\n";
+
+		cout << "Cols: " << descriptors1.cols << endl;
+
+		if (matches.size() == 0) continue;
+
+		// Filter features along y-axis
+		double maxYDistance = 10;
+		filterFeatures(matches, keypoints1, keypoints2, goodMatches, maxYDistance);
+		//goodMatches = matches;
+
+		if (goodMatches.size() == 0) continue;
+
+		// Draw stereo matches
+		Mat res;
+		cout << "drawStart\n";
+		drawMatches(img1, keypoints1, prev_img1, keypoints2, goodMatches, res, Scalar(255, 0, 0), Scalar(255, 0, 0));
+		imshow("stereo matches", res);
+		cout << "drawEnd\n";
+
+		prev_img1 = img1.clone();*/
+
+		////////////////////////////////////
+
+
+
+
+		// Extracting features
+		Ptr<cv::ORB> detectorORB = ORB::create();
+		vector<KeyPoint> active_keypoints;
+		Mat active_descriptors;
+
+		detectorORB->detectAndCompute(img1, noArray(), active_keypoints, active_descriptors);
+
+		// Match features
+		std::vector<int> match_idx;
+		slam::TrackingModule::match_features(shared.tracks, active_descriptors, match_idx);
+
+		cout << "Tracks:" << shared.tracks.size() << endl;
+
+		// Update tracks
+		slam::TrackingModule::update_tracks(shared.tracks, active_keypoints, active_descriptors, match_idx);
+
+
+		// Draw active and tracked features
+		std::vector<cv::KeyPoint> tracked_keypoints;
+		slam::TrackingModule::get_tracked_keypoints(active_keypoints, tracked_keypoints, match_idx);
+
+		Mat keypoints_img;
+		drawKeypoints(img1, active_keypoints, keypoints_img, Scalar(0, 255, 0));
+		drawKeypoints(keypoints_img, tracked_keypoints, keypoints_img, Scalar(0, 0, 255));
+		cv::imshow("Active and Tracked Keypoints", keypoints_img);
+
+
+		//Create new view
+		bool add_view = false;
+		slam::TrackedView new_view;
+		cv::Mat3f pointmap;
+		if (shared.views.empty()) {
+			new_view.R = shared.base_R;
+			new_view.T = shared.base_T;
+			add_view = true;
+		}
+		else {
+			float movement = slam::TrackingModule::get_median_feature_movement(shared.tracks);
+
+			cout << "Feature movement:" << movement << endl;
+
+			if (movement > 100) {
+				std::cout << "Movement is " << movement << "! Computing transformation...";
+
+				cv::Matx33f stepR;
+				cv::Matx31f stepT;
+				slam::TrackingModule::transformation_from_tracks(pointmap, stepR, stepT);
+				new_view.R = shared.base_R * stepR;
+				new_view.T = shared.base_T + shared.base_R*stepT;
+				add_view = true;
+			}
+		}
+
+		if (add_view) {
+			shared.views.push_back(new_view);
+			shared.base_R = new_view.R;
+			shared.base_T = new_view.T;
+
+			shared.tracks.clear();
+
+			for (unsigned int i = 0; i< active_keypoints.size(); i++)
+			{
+				slam::FeatureTrack track;
+				track.base_position = active_keypoints[i].pt;
+				track.active_position = track.base_position;
+
+				active_descriptors.row(i).copyTo(track.descriptor);
+
+				track.missed_frames = 0;
+
+				shared.tracks.push_back(track);
+			}
 		}
 
 		char key = waitKey(10);
