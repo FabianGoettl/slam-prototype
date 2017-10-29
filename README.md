@@ -3,7 +3,7 @@ This is a C++ Stereo SLAM prototype implementation based on OpenCV and PCL.
 The system requires two stereo calibrated USB webcams.
 
 ## Approach
-In each frame we extract ORB features and match them with features of previous frames.
+In each frame we extract ORB features and match them with the features of previous frames.
 If matches are found along the epipolar line, we triangulate the points and determine their 3D position.
 
 Based on the 3D-3D correspondences, we estimate the transformation between the frames by SVD decomposition with RANSAC.
