@@ -10,5 +10,7 @@ find_package(PCL 1.8.0 REQUIRED COMPONENTS common io registration segmentation v
 include_directories(${PCL_INCLUDE_DIRS})
 
 
-add_executable(slamPrototype my_slam_prototype.cpp)
+set(SOURCES my_slam_prototype.cpp my_slam_tracking.cpp my_slam_tracking.h)
+
+add_executable(slamPrototype ${SOURCES} )
 target_link_libraries(slamPrototype ${OpenCV_LIBS} ${PCL_LIBRARIES})

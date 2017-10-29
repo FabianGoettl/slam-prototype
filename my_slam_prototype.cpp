@@ -7,10 +7,12 @@
 #include "opencv2/core/utility.hpp"
 #include "opencv2/xfeatures2d.hpp"
 
-/*#include <pcl/common/common_headers.h>
+#include <pcl/common/common_headers.h>
 #include <pcl/features/normal_3d.h>
 #include <pcl/io/pcd_io.h>
-#include <pcl/visualization/pcl_visualizer.h>*/
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/console/parse.h>
+#include <pcl/registration/icp.h>
 
 #include <iostream>
 #include <stdio.h>
@@ -21,7 +23,7 @@
 
 using namespace cv;
 using namespace std;
-//using namespace pcl;
+using namespace pcl;
 
 enum { STEREO_BM = 0, STEREO_SGBM = 1, STEREO_HH = 2, STEREO_VAR = 3, STEREO_3WAY = 4 };
 
@@ -46,20 +48,7 @@ string calibration_filename = "";
 string disparity_filename = "";
 string point_cloud_filename = "";
 
-/*
-
-boost::shared_ptr<pcl::visualization::PCLVisualizer> createVis(string windowName)
-{
-	// --------------------------------------------
-	// -----Open 3D viewer and add point cloud-----
-	// --------------------------------------------
-	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer(windowName));
-	viewer->setBackgroundColor(0, 0, 0);
-	viewer->addCoordinateSystem(1.0);
-	viewer->initCameraParameters();
-	viewer->setCameraPosition(0, 0, -1, 0, -1, 0);
-	return (viewer);
-}*/
+string cloud_name = "Scene";
 
 
 static void print_help()
@@ -71,7 +60,22 @@ static void print_help()
 }
 
 
-
+boost::shared_ptr<pcl::visualization::PCLVisualizer> rgb_vis(pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud, string cloud_name)
+{
+	// --------------------------------------------
+	// -----Open 3D viewer and add point cloud-----
+	// --------------------------------------------
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
+	viewer->setBackgroundColor(0, 0, 0);
+	//pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(cloud);
+	//viewer->addPointCloud<pcl::PointXYZRGB>(cloud, rgb, cloud_name);
+	viewer->addPointCloud<pcl::PointXYZ>(cloud, cloud_name);
+	viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, cloud_name);
+	viewer->addCoordinateSystem(1.0);
+	viewer->initCameraParameters();
+	viewer->setCameraPosition(0, 0, -1, 0, -1, 0);
+	return (viewer);
+}
 
 
 void filter_stereo_features(const vector<cv::DMatch>& matches, vector<cv::KeyPoint>& keypoints1, vector<cv::KeyPoint>& keypoints2, vector<cv::DMatch>& goodMatches, double maxYDistance)
@@ -96,9 +100,8 @@ void filter_stereo_features(const vector<cv::DMatch>& matches, vector<cv::KeyPoi
 	}
 }
 
-void stereo_match(const Mat &img1, const Mat &img2, Mat &disparity, Mat &xyz) {
+void stereo_match(const Mat &img1, const Mat &img2, Mat &disparity, pcl::PointCloud<pcl::PointXYZ>::Ptr point_cloud) {
 	numberOfDisparities = ((img_size.width / 8) + 15) & -16;
-	//numberOfDisparities = 112;
 
 	// Stereo matchers
 	Ptr<StereoBM> bm = StereoBM::create(16, 9);
@@ -139,27 +142,71 @@ void stereo_match(const Mat &img1, const Mat &img2, Mat &disparity, Mat &xyz) {
 		sgbm->setMode(StereoSGBM::MODE_SGBM_3WAY);
 
 	Mat disp;
-	//Mat img1p, img2p, dispp;
-	//copyMakeBorder(img1, img1p, 0, 0, numberOfDisparities, 0, IPL_BORDER_REPLICATE);
-	//copyMakeBorder(img2, img2p, 0, 0, numberOfDisparities, 0, IPL_BORDER_REPLICATE);
-
-	//int64 t = getTickCount();
 
 	if (alg == STEREO_BM)
 		bm->compute(img1, img2, disp);
 	else if (alg == STEREO_SGBM || alg == STEREO_HH || alg == STEREO_3WAY)
 		sgbm->compute(img1, img2, disp);
 
-	//t = getTickCount() - t;
-	//printf("Time elapsed: %fms\n", t * 1000 / getTickFrequency());
-
-	//disp = dispp.colRange(numberOfDisparities, img1p.cols);
 	if (alg != STEREO_VAR)
 		disp.convertTo(disparity, CV_8U, 255 / (numberOfDisparities*16.));
 	else
 		disp.convertTo(disparity, CV_8U);
 
+	Mat xyz;
 	cv::reprojectImageTo3D(disp, xyz, Q, true);
+
+	// --- Create point cloud
+	const double max_z = 1.0e4;
+	for (int y = 0; y < xyz.rows; y++)
+	{
+		for (int x = 0; x < xyz.cols; x++)
+		{
+			Vec3f point = xyz.at<Vec3f>(y, x);
+			if (fabs(point[2] - max_z) < FLT_EPSILON || fabs(point[2]) > max_z) continue;
+
+			double X = point[0];
+			double Y = point[1];
+			double Z = point[2];
+
+			//pcl::PointXYZRGB rgbPoint;
+			pcl::PointXYZ rgbPoint;
+			rgbPoint.x = X;
+			rgbPoint.y = Y;
+			rgbPoint.z = Z;
+
+			//Vec3b colorLeft = img1.at<Vec3b>(y, x);
+
+			//uint32_t rgb = (static_cast<uint32_t>(colorLeft.val[2]) << 16 |
+			//	static_cast<uint32_t>(colorLeft.val[1]) << 8 | static_cast<uint32_t>(colorLeft.val[0]));
+			//rgbPoint.rgb = *reinterpret_cast<float*>(&rgb);
+
+			point_cloud->points.push_back(rgbPoint);
+		}
+	}
+}
+
+void tracks_to_pointcloud(const std::list<slam::FeatureTrack> &tracks, pcl::PointCloud<pcl::PointXYZ>::Ptr point_cloud) {
+
+	const double max_z = 1.0e4;
+
+	std::list<slam::FeatureTrack>::const_iterator track_it;
+	int i;
+	for (i = 0, track_it = tracks.begin(); track_it != tracks.end(); i++, track_it++) {
+
+		if (track_it->missed_frames == 0) {
+			Vec3f point = track_it->active_position_3d;
+
+			if (fabs(point[2] - max_z) < FLT_EPSILON || fabs(point[2]) > max_z) continue;
+
+			pcl::PointXYZ rgbPoint;
+			rgbPoint.x = point[0];
+			rgbPoint.y = point[1];
+			rgbPoint.z = point[2];
+
+			point_cloud->points.push_back(rgbPoint);
+		}
+	}
 }
 
 
@@ -168,7 +215,7 @@ int main(int argc, char** argv)
 
 	cv::CommandLineParser parser(argc, argv,
 		"{@arg1||}{@arg2||}{help h||}{algorithm||}{max-disparity|0|}{blocksize|0|}{scale|1|}{i||}{e||}{o||}{p||}");
-	
+
 	if (parser.has("help"))
 	{
 		print_help();
@@ -268,9 +315,10 @@ int main(int argc, char** argv)
 	if (!capA.open(0) || !capB.open(1))
 		return 0;
 
-	//namedWindow("disparity", 1);
-	//boost::shared_ptr<pcl::visualization::PCLVisualizer> scene_viewer;
-	//scene_viewer = createVis("Scene");
+	pcl::PointCloud<pcl::PointXYZ>::Ptr scene_point_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+
+	viewer = rgb_vis(scene_point_cloud, cloud_name);
 
 	bool do_tracking;
 	long frame_count = 0;
@@ -309,7 +357,7 @@ int main(int argc, char** argv)
 		}
 
 
-		////////////////////////////////////
+		//////////////// Matching features test (stereo) ////////////////////
 
 		// Extracting features
 		/*Ptr<cv::ORB> detectorORB = ORB::create();
@@ -349,9 +397,9 @@ int main(int argc, char** argv)
 		drawMatches(img1, keypoints1, img2, keypoints2, goodMatches, res, Scalar(255, 0, 0), Scalar(255, 0, 0));
 		imshow("stereo matches", res);
 		cout << "drawEnd\n";*/
-		
 
-		/////////////// Time variant test /////////////////////
+
+		/////////////// Matching features test (time) /////////////////////
 
 		/*if (prev_img1.empty()) {
 			prev_img1 = img1.clone();
@@ -413,7 +461,7 @@ int main(int argc, char** argv)
 
 		// Match features (stereo)
 		if (keypoints1.size() == 0 || keypoints2.size() == 0) continue;
-		
+
 		vector<DMatch> matches, goodMatches;
 
 		Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
@@ -441,16 +489,6 @@ int main(int argc, char** argv)
 		cout << "Tracks:" << shared.tracks.size() << endl;
 
 
-		// Draw active and tracked features
-		Mat keypoints_img;
-
-		std::vector<cv::KeyPoint> tracked_keypoints1;
-		slam::TrackingModule::get_tracked_keypoints(keypoints1, tracked_keypoints1, match_idx);
-
-		drawKeypoints(img1, keypoints1, keypoints_img, Scalar(0, 255, 0));
-		drawKeypoints(keypoints_img, tracked_keypoints1, keypoints_img, Scalar(0, 0, 255));
-		cv::imshow("Active and Tracked Keypoints", keypoints_img);
-
 		// Triangulate stereo features
 		std::vector<cv::Point3f> pnts3D;
 		slam::TrackingModule::triangulate_matches(matches, keypoints1, keypoints2, P1, P2, pnts3D);
@@ -458,17 +496,21 @@ int main(int argc, char** argv)
 		// Update tracks
 		slam::TrackingModule::update_tracks(shared.tracks, keypoints1, descriptors1, match_idx, pnts3D);
 
-		// Stereo matching
-		Mat disparity, xyz;
-		stereo_match(img1, img2, disparity, xyz);
+		// Draw active, tracked and triangulated features
+		Mat keypoints_img;
 
-		// Draw disparity map
-		Mat colorDisparity;
-		applyColorMap(disparity, colorDisparity, cv::ColormapTypes::COLORMAP_JET);
-		imshow("disparity", colorDisparity);
+		std::vector<cv::KeyPoint> tracked_keypoints1;
+		slam::TrackingModule::get_tracked_keypoints(keypoints1, tracked_keypoints1, match_idx);
 
+		std::vector<cv::KeyPoint> triangulated_keypoints1;
+		slam::TrackingModule::get_triangulated_keypoints(shared.tracks, keypoints1, triangulated_keypoints1, match_idx, pnts3D);
 
-		//Create new view
+		drawKeypoints(img1, keypoints1, keypoints_img, Scalar(0, 255, 0));
+		drawKeypoints(keypoints_img, tracked_keypoints1, keypoints_img, Scalar(0, 0, 255));
+		drawKeypoints(keypoints_img, triangulated_keypoints1, keypoints_img, Scalar(255, 0, 0));
+		cv::imshow("Active(Green), Tracked(Red) and Triangulated(Blue) Keypoints", keypoints_img);
+
+		// Create new view
 		bool add_view = false;
 		slam::TrackedView new_view;
 		cv::Mat3f pointmap;
@@ -482,12 +524,12 @@ int main(int argc, char** argv)
 
 			cout << "Feature movement:" << movement << endl;
 
-			if (movement > 100) {
+			if (movement > 120) {
 				std::cout << "Movement is " << movement << "! Computing transformation...";
 
 				cv::Matx33f stepR;
 				cv::Matx31f stepT;
-				slam::TrackingModule::transformation_from_tracks(shared.tracks,stepR, stepT);
+				slam::TrackingModule::transformation_from_tracks(shared.tracks, stepR, stepT);
 				new_view.R = shared.base_R * stepR;
 				new_view.T = shared.base_T + shared.base_R*stepT;
 				add_view = true;
@@ -501,7 +543,7 @@ int main(int argc, char** argv)
 
 			shared.tracks.clear();
 
-			for (unsigned int i = 0; i< keypoints1.size(); i++)
+			for (unsigned int i = 0; i < keypoints1.size(); i++)
 			{
 				slam::FeatureTrack track;
 				track.base_position = keypoints1[i].pt;
@@ -516,6 +558,58 @@ int main(int argc, char** argv)
 
 				shared.tracks.push_back(track);
 			}
+
+			// Create point cloud
+			Mat disparity, xyz;
+			pcl::PointCloud<pcl::PointXYZ>::Ptr active_point_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+			//stereo_match(img1, img2, disparity, active_point_cloud);
+			tracks_to_pointcloud(shared.tracks, active_point_cloud);
+
+
+			Eigen::Matrix4f active_camera_pose = Eigen::Matrix4f::Identity();
+
+			//   M11 M21 M31 T1
+			//   M12 M22 M32 T2
+			//   M13 M23 M33 T3
+
+			// rotation	
+			active_camera_pose(0, 0) = shared.base_R(0, 0);
+			active_camera_pose(0, 1) = shared.base_R(0, 1);
+			active_camera_pose(0, 2) = shared.base_R(0, 2);
+			active_camera_pose(1, 0) = shared.base_R(1, 0);
+			active_camera_pose(1, 1) = shared.base_R(1, 1);
+			active_camera_pose(1, 2) = shared.base_R(1, 2);
+			active_camera_pose(2, 0) = shared.base_R(2, 0);
+			active_camera_pose(2, 1) = shared.base_R(2, 1);
+			active_camera_pose(2, 2) = shared.base_R(2, 2);
+
+			// translation
+			active_camera_pose(0, 3) = shared.base_T(0, 0);
+			active_camera_pose(1, 3) = shared.base_T(1, 0);
+			active_camera_pose(2, 3) = shared.base_T(2, 0);
+
+			//shared.base_R * shared.base_T;
+			printf("Camera pose:\n");
+			cout << active_camera_pose << endl;
+
+			pcl::PointCloud<pcl::PointXYZ>::Ptr active_point_cloud_transformed(new pcl::PointCloud<pcl::PointXYZ>);
+			pcl::transformPointCloud(*active_point_cloud, *active_point_cloud_transformed, active_camera_pose);
+
+
+			// Add the active point cloud data to the scene cloud
+			*scene_point_cloud += *active_point_cloud_transformed;
+
+			// Draw disparity map
+			/*Mat colorDisparity;
+			applyColorMap(disparity, colorDisparity, cv::ColormapTypes::COLORMAP_JET);
+			imshow("disparity", colorDisparity);*/
+
+			// Display point cloud
+			//viewer->updatePointCloud(point_cloud_ptr, cloud_name);
+			viewer->removePointCloud(cloud_name);
+			viewer->addPointCloud<pcl::PointXYZ>(scene_point_cloud, cloud_name);
+			viewer->spinOnce(100);
 		}
 
 		char key = waitKey(10);

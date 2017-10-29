@@ -75,6 +75,25 @@ namespace slam {
 			}
 		}
 
+		static void get_triangulated_keypoints(std::list<FeatureTrack> &tracks,
+			const std::vector<cv::KeyPoint> &feature_points, std::vector<cv::KeyPoint> &feature_output, 
+			const std::vector<int> &match_idx, std::vector<cv::Point3f>& pnts3D) {
+
+			std::list<FeatureTrack>::iterator track_it;
+			int i;
+			for (i = 0, track_it = tracks.begin(); track_it != tracks.end(); i++, track_it++) {
+				int j = match_idx[i];
+				if (j >= 0) {
+					Point3d point = pnts3D[j];
+
+					if (point.x != 0 && point.y != 0 && point.z != 0) {
+						feature_output.push_back(feature_points.at(j));
+						continue;
+					}
+				}
+			}
+		}
+
 		static void triangulate_matches(std::vector<cv::DMatch>& matches, const std::vector<cv::KeyPoint>&keypoints1, const std::vector<cv::KeyPoint>& keypoints2,
 			cv::Mat& cam1P, cv::Mat& cam2P, std::vector<cv::Point3f>& pnts3D);
 

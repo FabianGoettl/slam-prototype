@@ -49,7 +49,7 @@ namespace slam {
 		int match_count = 0;
 		list<slam::FeatureTrack>::const_iterator track_it;
 		int i;
-		
+
 		for (i = 0, track_it = tracks.begin(); track_it != tracks.end(); i++, track_it++) {
 			vector<vector<DMatch>> matches;
 			matcher.knnMatch(track_it->descriptor, matches, 2);
@@ -72,24 +72,29 @@ namespace slam {
 		cout << "Matched features:" << match_count << endl;
 	}
 
-	void TrackingModule::update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points, 
+	void TrackingModule::update_tracks(std::list<FeatureTrack> &tracks, const std::vector<cv::KeyPoint> &feature_points,
 		const cv::Mat &feature_descriptors, std::vector<int> &match_idx, std::vector<cv::Point3f>& pnts3D) {
 
 		std::list<FeatureTrack>::iterator track_it;
 		int i, updated = 0, missed = 0;
 		for (i = 0, track_it = tracks.begin(); track_it != tracks.end(); i++, track_it++) {
 			int j = match_idx[i];
-			if (j >= 0){
-				track_it->missed_frames = 0;
-				track_it->active_position = feature_points[j].pt;
-				track_it->active_position_3d = pnts3D[j];
-				feature_descriptors.row(j).copyTo(track_it->descriptor);
-				updated++;
+			if (j >= 0) {
+
+				Point3d point = pnts3D[j];
+
+				if (point.x != 0 && point.y != 0 && point.z != 0) {
+					track_it->missed_frames = 0;
+					track_it->active_position = feature_points[j].pt;
+					track_it->active_position_3d = pnts3D[j];
+					feature_descriptors.row(j).copyTo(track_it->descriptor);
+					updated++;
+					continue;
+				}
 			}
-			else {
-				track_it->missed_frames++;
-				missed++;
-			}
+			// If not updated yet
+			track_it->missed_frames++;
+			missed++;
 		}
 
 		cout << "Updated Tracks:" << updated << " Missed:" << missed;
@@ -103,7 +108,7 @@ namespace slam {
 	}
 
 	float TrackingModule::get_median_feature_movement(const std::list<FeatureTrack> &tracks) {
-		
+
 		std::vector<float> vals;
 		std::list<FeatureTrack>::const_iterator track_it;
 		for (track_it = tracks.begin(); track_it != tracks.end(); track_it++) {
@@ -135,7 +140,7 @@ namespace slam {
 		Y.reserve(tracks.size());
 
 		for (track_it = tracks.begin(); track_it != tracks.end(); track_it++) {
-			
+
 			if (track_it->missed_frames != 0)
 				continue;
 
@@ -160,7 +165,7 @@ namespace slam {
 			Y(i, 2) = active_point.z;
 		}
 
-		if(X.rows > 0 && Y.rows)
+		if (X.rows > 0 && Y.rows)
 			ransac_transformation(X, Y, R, T);
 	}
 
@@ -176,10 +181,10 @@ namespace slam {
 		cv::Matx31f Tk;
 		std::vector<int> best_inliers;
 
-		for (int k = 0; k<max_iterations; k++) {
+		for (int k = 0; k < max_iterations; k++) {
 
 			// Select random points
-			for (int i = 0; i<min_support; i++) {
+			for (int i = 0; i < min_support; i++) {
 				int idx = rng(pcount);
 				Xk(i, 0) = X(idx, 0);
 				Xk(i, 1) = X(idx, 1);
@@ -194,7 +199,7 @@ namespace slam {
 
 			// Get error
 			std::vector<int> inliers;
-			for (int i = 0; i<pcount; i++) {
+			for (int i = 0; i < pcount; i++) {
 				float a, b, c, errori;
 				cv::Matx31f py, pyy;
 				py(0) = Y(i, 0);
@@ -220,7 +225,7 @@ namespace slam {
 		Xk.resize(best_inliers.size());
 		Yk.resize(best_inliers.size());
 
-		for (unsigned int i = 0; i<best_inliers.size(); i++) {
+		for (unsigned int i = 0; i < best_inliers.size(); i++) {
 			int idx = best_inliers[i];
 			Xk(i, 0) = X(idx, 0);
 			Xk(i, 1) = X(idx, 1);
@@ -234,13 +239,13 @@ namespace slam {
 	}
 
 	void TrackingModule::absolute_orientation(cv::Mat1f &X, cv::Mat1f &Y, cv::Matx33f &R, cv::Matx31f &T) {
-		
+
 		cv::Matx31f meanX(0, 0, 0), meanY(0, 0, 0);
 
 		int point_count = X.rows;
 
 		// Calculate mean
-		for (int i = 0; i<point_count; i++) {
+		for (int i = 0; i < point_count; i++) {
 			meanX(0) += X(i, 0);
 			meanX(1) += X(i, 1);
 			meanX(2) += X(i, 2);
@@ -252,7 +257,7 @@ namespace slam {
 		meanY *= 1.0f / point_count;
 
 		// Subtract mean
-		for (int i = 0; i<point_count; i++) {
+		for (int i = 0; i < point_count; i++) {
 			X(i, 0) -= meanX(0);
 			X(i, 1) -= meanX(1);
 			X(i, 2) -= meanX(2);
@@ -275,7 +280,7 @@ namespace slam {
 		T = meanX - R*meanY;
 	}
 
-	void TrackingModule::triangulate_matches(vector<DMatch>& matches, const vector<KeyPoint>&keypoints1, const vector<KeyPoint>& keypoints2, 
+	void TrackingModule::triangulate_matches(vector<DMatch>& matches, const vector<KeyPoint>&keypoints1, const vector<KeyPoint>& keypoints2,
 		Mat& cam1P, Mat& cam2P, vector<Point3f>& pnts3D)
 	{
 		// Convert keypoints into Point2f
